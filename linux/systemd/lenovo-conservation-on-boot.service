@@ -1,0 +1,12 @@
+[Unit]
+Description=Force Lenovo battery conservation mode ON at boot (cap charging at 60%)
+After=multi-user.target
+ConditionPathExists=/sys/devices/pci0000:00/0000:00:1f.0/PNP0C09:00/VPC2004:00/conservation_mode
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'echo 1 > /sys/devices/pci0000:00/0000:00:1f.0/PNP0C09:00/VPC2004:00/conservation_mode'
+
+[Install]
+WantedBy=multi-user.target

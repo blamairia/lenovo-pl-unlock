@@ -1,0 +1,22 @@
+# Build / temp
+*.log
+*.tmp
+*.bak
+/tmp/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local sensitive
+*.local

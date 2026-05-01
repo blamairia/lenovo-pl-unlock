@@ -1,0 +1,42 @@
+# Community-contributed safe PL1/PL2 values per Lenovo laptop model.
+#
+# Add your model via PR. Required fields:
+#   - dmi_product_name: from /sys/devices/virtual/dmi/id/product_name
+#   - dmi_product_version: from /sys/devices/virtual/dmi/id/product_version (or "" if not set)
+#   - cpu: marketing name (e.g. "Intel Core i5-13420H")
+#   - chassis: e.g. "17-inch", "14-inch", "Slim", etc.
+#   - charger_w: bundled charger wattage
+#   - profiles: PL1/PL2 values that you've verified stable
+#   - benchmarks: at least one Geekbench 6 result URL is recommended
+#   - thermals: max temp observed during a sustained 60-sec all-core load
+#   - tested_by: GitHub username
+#
+# See docs/contributing.md for the full submission guide.
+
+models:
+
+  - dmi_product_name: "83A2"
+    dmi_product_version: "Lenovo V17 G4 IRU"
+    cpu: "Intel Core i5-13420H"
+    chassis: "17-inch V-series"
+    charger_w: 65
+    factory_pl1_linux: 8
+    factory_pl1_windows: 20
+    profiles:
+      idle:        { pl1: 8,  pl2: 8 }
+      daily:       { pl1: 36, pl2: 58 }
+      performance: { pl1: 45, pl2: 65 }
+      burst:       { pl1: 60, pl2: 90 }
+    benchmarks:
+      geekbench_6_factory:    "https://browser.geekbench.com/v6/cpu/17839210"  # 1148 / 2524
+      geekbench_6_daily:      "https://browser.geekbench.com/v6/cpu/17838715"  # 2140 / 5877
+      geekbench_6_performance:"https://browser.geekbench.com/v6/cpu/17838772"  # 2204 / 6251
+      geekbench_6_burst:      "https://browser.geekbench.com/v6/cpu/17838843"  # 2166 / 6539
+    thermals:
+      sustained_60s_all_core_pl1_36: "median 86°C, max 97°C"
+      sustained_60s_all_core_pl1_45: "median 85°C, max 100°C (rare trip)"
+    tested_by: "blamairia"
+    notes: |
+      Excellent unlock — 2.6× multi-core speedup vs Linux factory.
+      PL1=36W is sweet spot. PL1=45W is borderline thermal. PL1=60W only for benchmarks.
+      Windows + Lenovo Vantage Performance Mode caps at 20W; ThrottleStop required for full unlock.

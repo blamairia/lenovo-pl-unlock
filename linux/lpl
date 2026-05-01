@@ -1,0 +1,141 @@
+#!/bin/bash
+#
+# lpl — Lenovo PL Unlock CLI
+# Switch CPU power-limit profiles on Lenovo IdeaPad/V/ThinkBook/Slim laptops
+# bypassing the EC firmware throttle via MMIO Lock.
+#
+# Usage:
+#   sudo lpl <profile>     # idle | daily | performance | burst
+#   lpl status             # show current profile + live wattage
+#   lpl autotune           # discover safe PL1 for this chassis (planned)
+#   sudo lpl install       # set up systemd services + autostart
+#   sudo lpl uninstall     # remove all components
+#
+
+set -u
+
+SETPL=/usr/local/bin/setPL.sh
+HELPER=/usr/local/bin/lpl-set-profile
+RAPL_PATH=/sys/class/powercap/intel-rapl:0
+TIME_WINDOW_FAST=1000000   # 1 second — PL1 kicks in fast (Linux default 56s)
+
+usage() {
+    cat <<EOF
+lpl — Lenovo PL Unlock CLI
+
+Usage:
+  sudo lpl <profile>      Switch profile: idle | daily | performance | burst
+  lpl status              Show current state (PL1, PL2, wattage, frequency)
+  lpl current             Print current profile name only
+  sudo lpl install        Install all systemd services + autostart
+  sudo lpl uninstall      Remove everything
+
+Profiles:
+  idle         8 W  /  8 W   — factory throttle (battery-friendly)
+  daily       36 W / 58 W    — recommended for most use
+  performance 45 W / 65 W    — heavy sustained load
+  burst       60 W / 90 W    — short bursts only (pulls from battery)
+
+EOF
+}
+
+cmd_set() {
+    local profile="$1"
+    case "$profile" in
+        idle)        PL1=8;  PL2=8 ;;
+        daily)       PL1=36; PL2=58 ;;
+        performance) PL1=45; PL2=65 ;;
+        burst)       PL1=60; PL2=90 ;;
+        *) echo "Unknown profile: $profile" >&2; usage; exit 1 ;;
+    esac
+    if [ "$EUID" -ne 0 ]; then
+        echo "Profile switch requires root. Try: sudo lpl $profile" >&2
+        exit 1
+    fi
+    modprobe msr 2>/dev/null
+    "$SETPL" "$PL1" "$PL2" >/dev/null 2>&1 || { echo "setPL.sh failed" >&2; exit 1; }
+    echo "$TIME_WINDOW_FAST" > "$RAPL_PATH/constraint_0_time_window_us"
+    echo "Set $profile  (PL1=${PL1}W  PL2=${PL2}W)"
+}
+
+cmd_status() {
+    local pl1 pl2 win profile_name
+    pl1=$(awk '{printf "%.0f", $1/1e6}' "$RAPL_PATH/constraint_0_power_limit_uw" 2>/dev/null)
+    pl2=$(awk '{printf "%.0f", $1/1e6}' "$RAPL_PATH/constraint_1_power_limit_uw" 2>/dev/null)
+    win=$(awk '{printf "%.0f", $1/1e6}' "$RAPL_PATH/constraint_0_time_window_us" 2>/dev/null)
+
+    case "$pl1" in
+        8)  profile_name="idle" ;;
+        36) profile_name="daily" ;;
+        45) profile_name="performance" ;;
+        60) profile_name="burst" ;;
+        *)  profile_name="custom (PL1=${pl1}W)" ;;
+    esac
+
+    # Live wattage over 1 sec
+    local e1 e2 watts
+    e1=$(cat "$RAPL_PATH/energy_uj" 2>/dev/null || echo 0)
+    sleep 1
+    e2=$(cat "$RAPL_PATH/energy_uj" 2>/dev/null || echo 0)
+    watts=$(awk -v d=$((e2-e1)) 'BEGIN{printf "%.2f", d/1e6}')
+
+    # Average freq across all cores
+    local avg_freq
+    avg_freq=$(awk '{s+=$1;c++} END{if(c>0)printf "%.2f", s/c/1e6}' \
+        /sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_cur_freq 2>/dev/null)
+
+    cat <<EOF
+LPL Status
+  Profile     : $profile_name
+  PL1         : ${pl1} W
+  PL2         : ${pl2} W
+  PL1 window  : ${win} s
+  Live pkg    : ${watts} W
+  Avg freq    : ${avg_freq} GHz
+
+Services:
+  cpu-pl-unlock.service           : $(systemctl is-active cpu-pl-unlock.service 2>/dev/null)
+  cpu-perf-tweaks.service         : $(systemctl is-active cpu-perf-tweaks.service 2>/dev/null)
+  lenovo-conservation-on-boot     : $(systemctl is-active lenovo-conservation-on-boot.service 2>/dev/null)
+EOF
+}
+
+cmd_current() {
+    local pl1
+    pl1=$(awk '{printf "%.0f", $1/1e6}' "$RAPL_PATH/constraint_0_power_limit_uw" 2>/dev/null)
+    case "$pl1" in
+        8)  echo "idle" ;;
+        36) echo "daily" ;;
+        45) echo "performance" ;;
+        60) echo "burst" ;;
+        *)  echo "custom-${pl1}W" ;;
+    esac
+}
+
+cmd_install() {
+    if [ "$EUID" -ne 0 ]; then
+        echo "Install requires root. Try: sudo lpl install" >&2
+        exit 1
+    fi
+    DIR="$(cd "$(dirname "$0")" && pwd)"
+    "$DIR/install.sh"
+}
+
+cmd_uninstall() {
+    if [ "$EUID" -ne 0 ]; then
+        echo "Uninstall requires root. Try: sudo lpl uninstall" >&2
+        exit 1
+    fi
+    DIR="$(cd "$(dirname "$0")" && pwd)"
+    "$DIR/uninstall.sh"
+}
+
+case "${1:-}" in
+    idle|daily|performance|burst) cmd_set "$1" ;;
+    status)    cmd_status ;;
+    current)   cmd_current ;;
+    install)   cmd_install ;;
+    uninstall) cmd_uninstall ;;
+    -h|--help|help|"") usage ;;
+    *) echo "Unknown command: $1" >&2; usage; exit 1 ;;
+esac

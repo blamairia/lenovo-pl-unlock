@@ -1,0 +1,16 @@
+[Unit]
+Description=Unlock Intel CPU power limits — PL1=36W PL2=58W with MMIO lock
+After=multi-user.target
+ConditionPathExists=/usr/local/bin/setPL.sh
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/sbin/modprobe msr
+ExecStart=/usr/local/bin/setPL.sh 36 58
+ExecStart=/bin/sh -c 'echo 1000000 > /sys/class/powercap/intel-rapl:0/constraint_0_time_window_us'
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

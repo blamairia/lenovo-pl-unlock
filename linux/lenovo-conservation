@@ -1,0 +1,7 @@
+#!/bin/sh
+F=/sys/devices/pci0000:00/0000:00:1f.0/PNP0C09:00/VPC2004:00/conservation_mode
+case "$1" in
+  1|on)  echo 1 > "$F" ;;
+  0|off) echo 0 > "$F" ;;
+  *)     cat "$F"; exit 0 ;;
+esac
