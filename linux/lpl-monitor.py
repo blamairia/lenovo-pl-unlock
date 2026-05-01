@@ -108,11 +108,24 @@ def cpu_busy_pct(prev):
         return None, (busy, total)
     return 100.0 * db / dt, (busy, total)
 
+def safe_read_int(path, default=0):
+    """Read a sysfs int file, return default on permission/IO error.
+    Used so the tray can start even when energy_uj isn't yet world-readable
+    (race with cpu-perf-tweaks.service at boot)."""
+    try:
+        return read_int(path)
+    except (PermissionError, FileNotFoundError, OSError, ValueError):
+        return default
+
 class WattageTray:
     def __init__(self):
-        self.last_energy = read_int(RAPL_PATH)
+        # Tolerate the boot race: energy_uj may not be world-readable yet.
+        # The tick() loop will retry every 2 sec and the chmod typically
+        # lands within ~30 sec of session start.
+        self.last_energy = safe_read_int(RAPL_PATH, default=0)
         self.last_time = GLib.get_monotonic_time()
-        self.energy_max = read_int(RAPL_MAX_PATH)
+        self.energy_max = safe_read_int(RAPL_MAX_PATH, default=2**63)
+        self.energy_readable = self.last_energy > 0
         self.cpu_prev = None
 
         self.indicator = AppIndicator3.Indicator.new(
@@ -205,7 +218,23 @@ class WattageTray:
 
     def tick(self):
         try:
-            e = read_int(RAPL_PATH)
+            # If energy_uj wasn't readable at boot (perms race),
+            # try again every tick — chmod usually lands within ~30s.
+            if not self.energy_readable:
+                e = safe_read_int(RAPL_PATH, default=0)
+                if e > 0:
+                    self.energy_readable = True
+                    self.last_energy = e
+                    self.last_time = GLib.get_monotonic_time()
+                    self.energy_max = safe_read_int(RAPL_MAX_PATH, default=2**63)
+                    self.indicator.set_label("⚡ …", "⚡ 99.9W")
+                else:
+                    # Still unreadable. Keep showing placeholder, don't crash.
+                    self.indicator.set_label("⚡ —", "⚡ 99.9W")
+                    self.power_label.set_label("Power: waiting for /sys perms…")
+                    return True
+
+            e = safe_read_int(RAPL_PATH, default=self.last_energy)
             t = GLib.get_monotonic_time()
             dt = (t - self.last_time) / 1e6
             de = e - self.last_energy
