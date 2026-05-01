@@ -20,6 +20,24 @@ That's a **2.6× multi-core speedup** vs Linux factory state — and crucially, 
 
 The chip has been the same all along. Lenovo just wouldn't let you use it.
 
+## "Why does this exist when [throttled / lenovo-throttling-fix] already exist?"
+
+Short answer: those tools target a **different throttle mechanism on different hardware**. They work great for ThinkPads. They don't work for consumer Lenovo (V/IdeaPad/ThinkBook/Slim) because the throttle mechanism is fundamentally different.
+
+| | [erpalma/throttled](https://github.com/erpalma/throttled) (& [k0a1a fork](https://github.com/k0a1a/lenovo-throttling-fix)) | This tool |
+|---|---|---|
+| Target hardware | ThinkPads (T480, X1C6, etc.) | Consumer Lenovo (V/IdeaPad/ThinkBook/Slim) |
+| Throttle mechanism it targets | BD_PROCHOT bidirectional thermal | EC-asserted CPL via MCHBAR — different signal |
+| Strategy | Polling loop (rewrite MSR 0x610 every 5s to *outpace* the EC) | Set MCHBAR lock bit → EC *physically cannot* rewrite |
+| Sets MMIO Lock bit | ❌ No | ✅ Yes — this is the whole technique |
+| Daemon required | Yes (continuous polling) | No (set once, stays until power-off) |
+
+**Empirical test on V17 G4**: we ran throttled's mechanisms directly. MSR 0x610 is BIOS-locked → writes rejected. MSR 0x1FC (BD_PROCHOT) BIOS-locked → rejected. MSR 0x150 (undervolt) blocked by Plundervolt mitigation. MCHBAR writes via intel_rapl sysfs do succeed, but **the EC overrides within seconds without the lock bit**, so throttled's 5-second polling loop loses the race. The author of throttled even acknowledges this in his README: *"On systems where the EC re-clamps aggressively, effectiveness is limited."*
+
+The MMIO Lock bit is the critical missing piece. Once set, the CPU's Power Control Unit refuses any further writes to MCHBAR PL1/PL2 from any agent (including the EC) until the chip loses power. ThrottleStop on Windows discovered this technique. [horshack-dpreview/setPL](https://github.com/horshack-dpreview/setPL) brought it to Linux as a one-shot script. We package it into a daily-use tool: profile switcher, tray app, systemd persistence, autotune.
+
+If you have a ThinkPad — use [throttled](https://github.com/erpalma/throttled), it's the right tool for that hardware. If you have a consumer Lenovo — you're in the right place.
+
 ## How it works
 
 This tool uses the **MMIO Lock technique** (the same one Windows users apply via [ThrottleStop](https://www.techpowerup.com/download/techpowerup-throttlestop/)):
