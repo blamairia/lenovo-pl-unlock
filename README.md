@@ -63,12 +63,18 @@ sudo ./install.sh
 After installation, the unlock applies on every boot. Use the CLI to switch profiles:
 
 ```bash
-sudo lpl daily         # 36W sustained — recommended for most use
-sudo lpl performance   # 45W sustained — heavy load
-sudo lpl burst         # 60W/90W — short benchmark bursts
-sudo lpl idle          # 8W — factory throttle (battery-friendly)
-sudo lpl status        # show current profile + live wattage
+sudo lpl eco           # 12W cap, max 70% freq — best battery life (~50% more hours)
+sudo lpl balanced      # 22W cap — quiet all-day, comfortable perf
+sudo lpl daily         # 36W cap — recommended (plugged in default)
+sudo lpl performance   # 45W cap — heavy sustained load
+sudo lpl burst         # 60W/90W — short benchmark bursts (chassis ceiling)
+sudo lpl idle          # 8W — factory throttle simulation (testing only)
+sudo lpl status        # show current profile + live wattage + battery hours
 ```
+
+Each profile sets PL1, PL2, the PL1 time window, EPP, max_perf_pct, and the
+power-profiles-daemon mode together so the OS scheduler stays consistent with
+the hardware power cap.
 
 A system tray app is also installed (`lpl-monitor`) showing live wattage, frequency, and a profile switcher.
 

@@ -24,38 +24,30 @@ usage() {
 lpl — Lenovo PL Unlock CLI
 
 Usage:
-  sudo lpl <profile>      Switch profile: idle | daily | performance | burst
-  lpl status              Show current state (PL1, PL2, wattage, frequency)
+  sudo lpl <profile>      Switch profile (see below)
+  lpl status              Show current state (PL1, PL2, wattage, frequency, battery)
   lpl current             Print current profile name only
   sudo lpl install        Install all systemd services + autostart
   sudo lpl uninstall      Remove everything
 
 Profiles:
-  idle         8 W  /  8 W   — factory throttle (battery-friendly)
-  daily       36 W / 58 W    — recommended for most use
-  performance 45 W / 65 W    — heavy sustained load
-  burst       60 W / 90 W    — short bursts only (pulls from battery)
+  eco         12 W /  25 W   — battery saver, max hours, capped to 70% freq
+  balanced    22 W /  45 W   — quiet all-day, balanced perf/efficiency
+  daily       36 W /  58 W   — recommended for most use (plugged in)
+  performance 45 W /  65 W   — heavy sustained load
+  burst       60 W /  90 W   — short bursts only (charger / chassis ceiling)
+  idle         8 W /   8 W   — factory throttle simulation (testing only)
 
 EOF
 }
 
 cmd_set() {
-    local profile="$1"
-    case "$profile" in
-        idle)        PL1=8;  PL2=8 ;;
-        daily)       PL1=36; PL2=58 ;;
-        performance) PL1=45; PL2=65 ;;
-        burst)       PL1=60; PL2=90 ;;
-        *) echo "Unknown profile: $profile" >&2; usage; exit 1 ;;
-    esac
+    # Delegate to the helper which knows about EPP, max_perf_pct, power-profiles-daemon
     if [ "$EUID" -ne 0 ]; then
-        echo "Profile switch requires root. Try: sudo lpl $profile" >&2
+        echo "Profile switch requires root. Try: sudo lpl $1" >&2
         exit 1
     fi
-    modprobe msr 2>/dev/null
-    "$SETPL" "$PL1" "$PL2" >/dev/null 2>&1 || { echo "setPL.sh failed" >&2; exit 1; }
-    echo "$TIME_WINDOW_FAST" > "$RAPL_PATH/constraint_0_time_window_us"
-    echo "Set $profile  (PL1=${PL1}W  PL2=${PL2}W)"
+    /usr/local/bin/lpl-set-profile "$1"
 }
 
 cmd_status() {
@@ -66,6 +58,8 @@ cmd_status() {
 
     case "$pl1" in
         8)  profile_name="idle" ;;
+        12) profile_name="eco" ;;
+        22) profile_name="balanced" ;;
         36) profile_name="daily" ;;
         45) profile_name="performance" ;;
         60) profile_name="burst" ;;
@@ -105,6 +99,8 @@ cmd_current() {
     pl1=$(awk '{printf "%.0f", $1/1e6}' "$RAPL_PATH/constraint_0_power_limit_uw" 2>/dev/null)
     case "$pl1" in
         8)  echo "idle" ;;
+        12) echo "eco" ;;
+        22) echo "balanced" ;;
         36) echo "daily" ;;
         45) echo "performance" ;;
         60) echo "burst" ;;
@@ -131,7 +127,7 @@ cmd_uninstall() {
 }
 
 case "${1:-}" in
-    idle|daily|performance|burst) cmd_set "$1" ;;
+    eco|balanced|daily|performance|burst|idle) cmd_set "$1" ;;
     status)    cmd_status ;;
     current)   cmd_current ;;
     install)   cmd_install ;;

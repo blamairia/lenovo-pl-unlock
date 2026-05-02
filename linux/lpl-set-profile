@@ -1,18 +1,54 @@
 #!/bin/sh
 # lpl-set-profile <profile_name>
-# Switches Lenovo PL unlock profile via setPL.sh
-case "$1" in
-  idle)        PL1=8;  PL2=8 ;;
-  daily)       PL1=36; PL2=58 ;;
-  performance) PL1=45; PL2=65 ;;
-  burst)       PL1=60; PL2=90 ;;
+# Switch Lenovo PL Unlock profile via setPL.sh + governor/EPP/power-profiles-daemon
+
+PROFILE=${1:-}
+
+case "$PROFILE" in
+  eco)
+    PL1=12;  PL2=25;  MAX_PERF_PCT=70;  EPP=power;                PPD=power-saver
+    ;;
+  balanced)
+    PL1=22;  PL2=45;  MAX_PERF_PCT=100; EPP=balance_performance;  PPD=balanced
+    ;;
+  daily)
+    PL1=36;  PL2=58;  MAX_PERF_PCT=100; EPP=performance;          PPD=performance
+    ;;
+  performance)
+    PL1=45;  PL2=65;  MAX_PERF_PCT=100; EPP=performance;          PPD=performance
+    ;;
+  burst)
+    PL1=60;  PL2=90;  MAX_PERF_PCT=100; EPP=performance;          PPD=performance
+    ;;
   current)
     awk '{printf "%.0f\n", $1/1e6}' /sys/class/powercap/intel-rapl:0/constraint_0_power_limit_uw
     exit 0
     ;;
-  *) echo "Usage: $0 {idle|daily|performance|burst|current}" >&2; exit 1 ;;
+  *)
+    echo "Usage: $0 {eco|balanced|daily|performance|burst|current}" >&2
+    exit 1
+    ;;
 esac
+
+# 1. Power limits via setPL.sh (MMIO Lock + MSR)
 /sbin/modprobe msr 2>/dev/null
 /usr/local/bin/setPL.sh "$PL1" "$PL2" > /dev/null 2>&1
-echo 1000000 > /sys/class/powercap/intel-rapl:0/constraint_0_time_window_us
-echo "$1 ($PL1W / $PL2W)"
+
+# 2. PL1 time window — fast-kick-in (1 sec instead of default 56)
+echo 1000000 > /sys/class/powercap/intel-rapl:0/constraint_0_time_window_us 2>/dev/null
+
+# 3. max_perf_pct (frequency cap as % of max — only matters for eco)
+echo "$MAX_PERF_PCT" > /sys/devices/system/cpu/intel_pstate/max_perf_pct 2>/dev/null
+
+# 4. EPP on every core
+for f in /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference; do
+  echo "$EPP" > "$f" 2>/dev/null
+done
+
+# 5. power-profiles-daemon (best-effort — needs user D-Bus session)
+TARGET_USER="${SUDO_USER:-billell}"
+sudo -u "$TARGET_USER" \
+  DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u $TARGET_USER)/bus" \
+  /usr/bin/powerprofilesctl set "$PPD" 2>/dev/null || true
+
+echo "$PROFILE (PL1=${PL1}W PL2=${PL2}W max%=${MAX_PERF_PCT} EPP=$EPP PPD=$PPD)"

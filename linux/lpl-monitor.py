@@ -16,11 +16,17 @@ INTERVAL_SEC = 2
 PROFILES = ["performance", "balanced", "power-saver"]
 # (name, PL1 watts, label)
 LPL_PROFILES = [
-    ("idle",        8,  "Idle (8W) — factory throttle"),
+    ("eco",         12, "Eco (12W) — battery saver, max hours"),
+    ("balanced",    22, "Balanced (22W) — quiet all-day"),
     ("daily",       36, "Daily (36W) — recommended"),
     ("performance", 45, "Performance (45W) — heavy load"),
     ("burst",       60, "Burst (60W/90W) — short bursts only"),
 ]
+
+# Battery + power supply paths (Lenovo V17 G4)
+BAT_BASE = "/sys/class/power_supply/BAT0"
+AC_BASE = "/sys/class/power_supply/ADP0"
+SYSTEM_OVERHEAD_W = 8  # rough estimate: screen + RAM + SSD + wifi + chipset
 
 def read_int(path):
     with open(path) as f:
@@ -69,6 +75,67 @@ def detect_lpl_profile():
         if d < best_diff:
             best, best_diff = name, d
     return best if best_diff <= 3 else None
+
+def battery_info(live_pkg_w):
+    """Return (label_str, sensitive) describing current battery state.
+    Uses live_pkg_w to estimate hours when on AC.
+    """
+    try:
+        cap = read_int(f"{BAT_BASE}/capacity")
+        status = read_str(f"{BAT_BASE}/status")
+        e_now_wh = read_int(f"{BAT_BASE}/energy_now") / 1e6
+        e_full_wh = read_int(f"{BAT_BASE}/energy_full") / 1e6
+        e_design_wh = read_int(f"{BAT_BASE}/energy_full_design") / 1e6
+        cycles = 0
+        try:
+            cycles = read_int(f"{BAT_BASE}/cycle_count")
+        except Exception:
+            pass
+        ac_online = 0
+        try:
+            ac_online = read_int(f"{AC_BASE}/online")
+        except Exception:
+            pass
+        # Actual discharge rate (only meaningful when on battery)
+        p_now_w = 0.0
+        try:
+            p_now_w = read_int(f"{BAT_BASE}/power_now") / 1e6
+        except Exception:
+            pass
+
+        health_pct = 100 * e_full_wh / e_design_wh if e_design_wh > 0 else 100
+        total_w = max(0.5, live_pkg_w + SYSTEM_OVERHEAD_W)
+
+        if status == "Discharging":
+            # Actually on battery — use measured power_now if available
+            draw = p_now_w if p_now_w > 1 else total_w
+            hours = e_now_wh / draw
+            return (f"🔋 {cap}% · {hours:.1f}h left ({draw:.1f}W draw)", True)
+        elif status == "Charging":
+            return (f"🔌 {cap}% · charging", True)
+        elif status in ("Not charging", "Full"):
+            # AC connected, battery either full or capped (conservation mode)
+            hours_full = e_full_wh / total_w
+            hours_now = e_now_wh / total_w
+            return (f"🔌 {cap}% · ~{hours_now:.1f}h if unplug · {hours_full:.1f}h from full", True)
+        else:
+            return (f"🔋 {cap}% · {status}", False)
+    except Exception as ex:
+        return (f"Battery: {ex}", False)
+
+def battery_health_str():
+    try:
+        e_full = read_int(f"{BAT_BASE}/energy_full") / 1e6
+        e_design = read_int(f"{BAT_BASE}/energy_full_design") / 1e6
+        cycles = 0
+        try:
+            cycles = read_int(f"{BAT_BASE}/cycle_count")
+        except Exception:
+            pass
+        pct = 100 * e_full / e_design if e_design > 0 else 100
+        return f"Battery health: {pct:.0f}% · {e_full:.1f}/{e_design:.0f}Wh · {cycles} cycles"
+    except Exception:
+        return "Battery health: unknown"
 
 def set_lpl_profile(name):
     r = subprocess.run(["sudo", "-n", LPL_HELPER, name],
@@ -150,6 +217,14 @@ class WattageTray:
         self.cpu_label = Gtk.MenuItem(label="CPU: …")
         self.cpu_label.set_sensitive(False)
         self.menu.append(self.cpu_label)
+
+        self.battery_label = Gtk.MenuItem(label="Battery: …")
+        self.battery_label.set_sensitive(False)
+        self.menu.append(self.battery_label)
+
+        self.bat_health_label = Gtk.MenuItem(label=battery_health_str())
+        self.bat_health_label.set_sensitive(False)
+        self.menu.append(self.bat_health_label)
 
         self.menu.append(Gtk.SeparatorMenuItem())
 
@@ -253,6 +328,8 @@ class WattageTray:
             self.power_label.set_label(f"Power: {watts:.2f} W")
             self.freq_label.set_label(f"Freq: avg {avg_f:.2f} GHz  max {max_f:.2f} GHz")
             self.cpu_label.set_label(f"CPU busy: {busy_str}")
+            bat_str, _ = battery_info(watts)
+            self.battery_label.set_label(bat_str)
         except Exception as ex:
             self.power_label.set_label(f"Error: {ex}")
         return True
